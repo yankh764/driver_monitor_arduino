@@ -3,8 +3,8 @@
 #include <TinyGPS.h>
 
 /* Create new software serials */
-SoftwareSerial GPS_S(3, 4);
-SoftwareSerial GSM_S(7, 6);
+SoftwareSerial GPS_S(4, 3);
+SoftwareSerial GSM_S(6, 7);
 /* Create lcd I2C object */
 LiquidCrystal_I2C LCD_O(0x27, 20, 4);
 /* Create gps object */
@@ -14,11 +14,6 @@ TinyGPS GPS_O;
 const int _buzzer_pin = 2;
 const int _tilt_pin = 5;
 const int _mq3_pin = A0;
-
-struct location {
-        float latitude;
-        float longitude;
-};
 
 
 static float get_alcohol_value()
@@ -58,7 +53,7 @@ static void send_sms(const char *message)
 {
         GSM_S.println("AT+CMGF=1");
         delay(1000);
-        GSM_S.println("AT+CMGS=\"+972543202441\"\r");
+        GSM_S.println("AT+CMGS=\"+972539585611\"\r");
         delay(1000);
         GSM_S.println(message);
         delay(100);
@@ -67,19 +62,16 @@ static void send_sms(const char *message)
 
 static inline size_t get_full_message_len(const char *mess, const char *loc_mess)
 {
+        const size_t loc_size = 2 * sizeof(float);
         const int add_chars = 3;
         
-        return strlen(mess) + strlen(loc_mess) + 2 * sizeof(float) + add_chars + 1;
+        return strlen(mess) + strlen(loc_mess) + loc_size + add_chars + 1;
 }
 
-static struct location get_current_location()
+static inline void get_location(float *latitude, float *longitude)
 {
-        struct location current;
-
         GPS_O.encode(GPS_S.read());
-        GPS_O.f_get_position(&(current.latitude), &(current.longitude));
-
-        return current;
+        GPS_O.f_get_position(latitude, longitude);
 }
 
 static void inform_parent(const char *message)
@@ -87,11 +79,10 @@ static void inform_parent(const char *message)
         const char *loc_mess = "\nYour son's location is (lat, long):";
         const size_t full_len = get_full_message_len(message, loc_mess);
         char full_message[full_len];
-        struct location son;
+        float longi, lati;
 
-        son = get_current_location();
-        
-        snprintf(full_message, full_len, "%s%s %f, %f", message, loc_mess, son.latitude, son.longitude);
+        get_location(&lati, &longi);        
+        snprintf(full_message, full_len, "%s%s %f, %f", message, loc_mess, lati, longi);
         lcd_cprint("Sending SMS", 1000);
         send_sms(full_message);
         lcd_cprint("SMS sent", 1000);
@@ -158,7 +149,7 @@ static inline float get_current_speed()
 static int handle_illegal_speed()
 {
         warn_driver("Driving fast");
-        inform_parent("Your son has reached the driving speed limit.");
+        inform_parent("Your son has passed the driving speed limit.");
         
         return 1;
 }
@@ -201,7 +192,9 @@ static int tilt_test()
 static int monitor_driver()
 {
         int retval;
-
+        
+        lcd_cprint("Driving monitor", 500);
+         
         if (!(retval = alcohol_test()))
                 while (!(retval = speed_test()))
                         if ((retval = tilt_test()))
@@ -232,7 +225,6 @@ static void handle_unavailable_serial()
         lcd_cprint("1", 1000);
         lcd_cprint("1..2", 1000);
         lcd_cprint("1..2..3", 1000);
-        lcd_cprint("1..2..3..4", 1000);
 }
 
 static void init_lcd()
