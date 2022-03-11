@@ -3,14 +3,15 @@
 #include <TinyGPS.h>
 
 /* Create new software serials */
-SoftwareSerial GPS_S(4, 3);
-SoftwareSerial GSM_S(6, 7);
+SoftwareSerial GPS_S(3, 4);
+SoftwareSerial GSM_S(7, 6);
 /* Create lcd I2C object */
 LiquidCrystal_I2C LCD_O(0x27, 20, 4);
 /* Create gps object */
 TinyGPS GPS_O;
 
 /* Constant parameters */
+const int _baud = 9600;
 const int _buzzer_pin = 2;
 const int _tilt_pin = 5;
 const int _mq3_pin = A0;
@@ -51,6 +52,8 @@ static void init_alcohol_test()
 
 static void send_sms(const char *message)
 {
+        GPS_S.end();
+        GSM_S.begin(_baud);
         GSM_S.println("AT+CMGF=1");
         delay(1000);
         GSM_S.println("AT+CMGS=\"+972539585611\"\r");
@@ -58,6 +61,8 @@ static void send_sms(const char *message)
         GSM_S.println(message);
         delay(100);
         GSM_S.println((char)26);
+        GSM_S.end();
+        GPS_S.begin(_baud);
 }
 
 static inline size_t get_full_message_len(const char *mess, const char *loc_mess)
@@ -68,10 +73,14 @@ static inline size_t get_full_message_len(const char *mess, const char *loc_mess
         return strlen(mess) + strlen(loc_mess) + loc_size + add_chars + 1;
 }
 
-static inline void get_location(float *latitude, float *longitude)
+static void get_location(float *flat, float *flon)
 {
-        GPS_O.encode(GPS_S.read());
-        GPS_O.f_get_position(latitude, longitude);
+        while (1) {
+                if (GPS_S.available() && GPS_O.encode(GPS_S.read())) {
+                        GPS_O.f_get_position(flat, flon);
+                        break;
+                }
+        }
 }
 
 static void inform_parent(const char *message)
@@ -79,10 +88,13 @@ static void inform_parent(const char *message)
         const char *loc_mess = "\nYour son's location is (lat, long):";
         const size_t full_len = get_full_message_len(message, loc_mess);
         char full_message[full_len];
-        float longi, lati;
+        String slat, slon;
+        float flon, flat;
 
-        get_location(&lati, &longi);        
-        snprintf(full_message, full_len, "%s%s %f, %f", message, loc_mess, lati, longi);
+        get_location(&flat, &flon);
+        slat = String(flat, sizeof(float));
+        slon = String(flon, sizeof(float));
+        snprintf(full_message, full_len, "%s%s %s, %s", message, loc_mess, slat, slon);
         lcd_cprint("Sending SMS", 1000);
         send_sms(full_message);
         lcd_cprint("SMS sent", 1000);
@@ -126,7 +138,8 @@ static int alcohol_test()
 
         for (i=0; i<4000; i++)
                 if (is_drunk())
-                        return handle_drunk_driver();                                            
+                        return handle_drunk_driver();
+                                                                    
         lcd_cprint("Drive safely", 1500);
         
         return 0;
@@ -139,30 +152,12 @@ static bool is_illegal_speed(float kmh)
         return kmh > max_speed;
 }
 
-static inline float get_current_speed()
-{
-        GPS_O.encode(GPS_S.read());
-        
-        return  GPS_O.f_speed_kmph();
-}
-
 static int handle_illegal_speed()
 {
         warn_driver("Driving fast");
         inform_parent("Your son has passed the driving speed limit.");
         
         return 1;
-}
-
-/*
- * Return non-zero value when illegal speed detected
- */
-static int speed_test()
-{
-        if (is_illegal_speed(get_current_speed()))
-                return handle_illegal_speed();
-        else
-                return 0;
 }
 
 static inline bool is_sus_tilt() 
@@ -178,14 +173,6 @@ static int handle_sus_tilt()
         return 1;
 }
 
-static int tilt_test()
-{
-        if (is_sus_tilt())
-                return handle_sus_tilt();
-        else
-                return 0;
-}
-
 /*
  * Return non-zero value when illegal move was detected
  */
@@ -196,15 +183,14 @@ static int monitor_driver()
         lcd_cprint("Driving monitor", 500);
          
         if (!(retval = alcohol_test()))
-                while (!(retval = speed_test()))
-                        if ((retval = tilt_test()))
-                                break;
+                while (1) {
+                        if (GPS_S.available() && GPS_O.encode(GPS_S.read()))
+                                if (is_illegal_speed(GPS_O.f_speed_kmph()))
+                                        return handle_illegal_speed();
+                        if (is_sus_tilt())
+                                return handle_sus_tilt();
+                }
         return retval;
-}
-
-static bool are_available_serials()
-{
-        return (GPS_S.available() && GSM_S.available());
 }
 
 static void stop_arduino()
@@ -245,10 +231,7 @@ static void init_buzzer()
 
 void setup() 
 {
-        const int baud = 9600;
- 
-        GPS_S.begin(baud);
-        GSM_S.begin(baud);
+        GPS_S.begin(_baud);
         init_tilt_sensor();
         init_buzzer();
         init_lcd();
@@ -256,7 +239,7 @@ void setup()
 
 void loop() 
 {
-        if (are_available_serials()) {
+        if (GPS_S.available()) {
                 if (monitor_driver())
                         stop_arduino();
         } else {
