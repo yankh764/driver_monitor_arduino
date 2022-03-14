@@ -50,10 +50,28 @@ static void init_alcohol_test()
         lcd_cprint("START EXHALING", 3000);
 }
 
-static void send_sms(const char *message)
+/*
+ * Since the fact that arduino nano can handle only one 
+ * additional serial, we must use this function to be able
+ * to start the GSM serial. If start = true it'll end the GPS
+ * Serial and start a new GSM serial. Otherwise it will end 
+ * the GSM serial and start a new GPS serial.
+ */
+static void handle_gsm_serial(bool start)
 {
-        GPS_S.end();
-        GSM_S.begin(_baud);
+        if (start) {
+                GPS_S.end();
+                GSM_S.begin(_baud);
+        } else {
+                GSM_S.end();
+                GPS_S.begin(_baud);
+        }
+        delay(200);
+}
+
+static void send_sms(String message)
+{
+        handle_gsm_serial(true);
         GSM_S.println("AT+CMGF=1");
         delay(1000);
         GSM_S.println("AT+CMGS=\"+972539585611\"\r");
@@ -61,16 +79,7 @@ static void send_sms(const char *message)
         GSM_S.println(message);
         delay(100);
         GSM_S.println((char)26);
-        GSM_S.end();
-        GPS_S.begin(_baud);
-}
-
-static inline size_t get_full_message_len(const char *mess, const char *loc_mess)
-{
-        const size_t loc_size = 2 * sizeof(float);
-        const int add_chars = 3;
-        
-        return strlen(mess) + strlen(loc_mess) + loc_size + add_chars + 1;
+        handle_gsm_serial(false);
 }
 
 static void get_location(float *flat, float *flon)
@@ -83,18 +92,15 @@ static void get_location(float *flat, float *flon)
         }
 }
 
-static void inform_parent(const char *message)
+static void inform_parent(String message)
 {
-        const char *loc_mess = "\nYour son's location is (lat, long):";
-        const size_t full_len = get_full_message_len(message, loc_mess);
-        char full_message[full_len];
-        String slat, slon;
+        const String loc = "\nYour son's location is (lat, long): ";
+        const String seperator = ", ";
+        String full_message;
         float flon, flat;
 
         get_location(&flat, &flon);
-        slat = String(flat, sizeof(float));
-        slon = String(flon, sizeof(float));
-        snprintf(full_message, full_len, "%s%s %s, %s", message, loc_mess, slat, slon);
+        full_message = String(message + loc + flat + seperator + flon);
         lcd_cprint("Sending SMS", 1000);
         send_sms(full_message);
         lcd_cprint("SMS sent", 1000);
@@ -106,9 +112,9 @@ static void beep_warning()
 
         for (i=0; i<5; i++) {
                 digitalWrite(_buzzer_pin, HIGH);
-                delay(300);
+                delay(100);
                 digitalWrite(_buzzer_pin, LOW);
-                delay(300);
+                delay(100);
         }
 }
 
@@ -140,7 +146,7 @@ static int alcohol_test()
                 if (is_drunk())
                         return handle_drunk_driver();
                                                                     
-        lcd_cprint("Drive safely", 1500);
+        lcd_cprint("Drive safely", 100);
         
         return 0;
 }
@@ -229,6 +235,11 @@ static void init_buzzer()
         pinMode(_buzzer_pin, OUTPUT);
 }
 
+static bool is_available_serial()
+{
+        return (GPS_S.available() > 0);
+}
+
 void setup() 
 {
         GPS_S.begin(_baud);
@@ -239,7 +250,7 @@ void setup()
 
 void loop() 
 {
-        if (GPS_S.available()) {
+        if (is_available_serial()) {
                 if (monitor_driver())
                         stop_arduino();
         } else {
